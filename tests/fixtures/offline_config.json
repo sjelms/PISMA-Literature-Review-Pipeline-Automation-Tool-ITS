@@ -35,6 +35,8 @@
   "openalex_enabled": false,
   "semantic_scholar_enabled": false,
   "crossref_enabled": false,
+  "discovery_stage_enabled": true,
+  "ai_evaluation_enabled": true,
   "include_pubmed": false,
   "max_workers": 2,
   "request_timeout_seconds": 10,

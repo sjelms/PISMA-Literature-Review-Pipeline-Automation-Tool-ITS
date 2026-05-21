@@ -20,9 +20,6 @@ ResearchFitLabel = Literal["STRONG_FIT", "NEAR_FIT", "WEAK_FIT"]
 class TopicMatchResult:
     """Structured semantic topic-match result used before deeper screening."""
 
-    def __init__(self):
-        pass
-
     similarity: float
     score: float
     threshold: float
@@ -226,7 +223,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
         research_fit_label = self._classify_research_fit(weighted_keyword_score, matched_keyword_count)
         try:
             LOGGER.debug("Local topic prefilter embedding generation started for '%s'.", paper.title)
-            review_embedding, paper_embedding = self._embed_texts()
+            review_embedding, paper_embedding = self._embed_texts([self._review_text, paper_text])
             LOGGER.debug("Local topic prefilter embedding generation finished for '%s'.", paper.title)
             cosine_similarity = float((review_embedding * paper_embedding).sum().item())
             similarity = max(0.0, min(1.0, cosine_similarity))
@@ -282,6 +279,26 @@ class LocalTopicMatcher(BaseTopicMatcher):
                 "Automatic filtering is enabled, and the paper failed the semantic topic gate or the weighted rule gate, so it will be excluded."
             )
         return TopicMatchResult(
+            similarity=similarity,
+            score=score,
+            threshold=self.threshold,
+            review_threshold=self.review_threshold,
+            high_threshold=self.high_threshold,
+            model_name=self.model_name,
+            enabled=self.enabled,
+            classification=classification,
+            should_exclude=should_exclude,
+            keyword_overlap_score=weighted_keyword_score,
+            research_fit_label=research_fit_label,
+            weighted_keyword_score=weighted_keyword_score,
+            min_keyword_matches=self.config.topic_prefilter_min_keyword_matches,
+            matched_keyword_count=matched_keyword_count,
+            keyword_rule_count=len(self._keyword_rules),
+            matched_keywords=matched_keywords,
+            extracted_topics=extracted_topics,
+            keyword_match_details=keyword_match_details,
+            source_sections=sections,
+            explanation=" ".join(explanation_parts),
         )
 
     def _load_cached_model(self, auto_tokenizer: Any, auto_model: Any) -> tuple[Any, Any]:
@@ -485,7 +502,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
         normalized = text.strip()
         if normalized in self._text_embedding_cache:
             return self._text_embedding_cache[normalized]
-        embeddings = self._embed_texts()
+        embeddings = self._embed_texts([normalized])
         if len(embeddings) != 1:
             raise RuntimeError("Unexpected embedding batch shape for single-text lookup.")
         self._text_embedding_cache[normalized] = embeddings[0]
@@ -515,17 +532,17 @@ class LocalTopicMatcher(BaseTopicMatcher):
             return "REVIEW"
         return "LOW_RELEVANCE"
 
-    def _embed_texts(self) -> Any:
+    def _embed_texts(self, texts: list[str]) -> Any:
         """Encode and normalize text embeddings for cosine similarity scoring."""
 
         assert self._tokenizer is not None
         assert self._model is not None
         assert self._torch is not None
 
-        encoded = self._tokenizer
+        encoded = self._tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
         encoded = {key: value.to(self._device) for key, value in encoded.items()}
         with self._torch.no_grad():
-            output = self._model
+            output = self._model(**encoded)
         token_embeddings = output.last_hidden_state
         attention_mask = encoded["attention_mask"].unsqueeze(-1).expand(token_embeddings.size()).float()
         pooled = (token_embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1).clamp(min=1e-9)
